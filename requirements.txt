@@ -1,0 +1,5 @@
+# Weather tool third-party dependencies
+# Currently only pynacl: used for QWeather JWT Ed25519 signing.
+# It is OPTIONAL: without it, weather.py falls back to system openssl
+# (requires openssl 1.1.1+; Anaconda's bundled 1.0.2k does not support Ed25519).
+pynacl

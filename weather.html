@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>天气仪表盘</title>
+<script src="echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --line: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    padding: 20px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  h1 { font-size: 22px; font-weight: 600; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .map-link { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); }
+  .map-link:hover { text-decoration: underline; }
+  .status { color: var(--muted); font-size: 13px; }
+  .status.error { color: #f87171; }
+  button {
+    background: var(--accent);
+    color: #082f49;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: .9; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  /* 当前天气 */
+  .current { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .temp-big { font-size: 64px; font-weight: 700; line-height: 1; }
+  .temp-big small { font-size: 24px; color: var(--muted); }
+  .cur-info h2 { font-size: 18px; margin-bottom: 6px; }
+  .cur-meta { color: var(--muted); font-size: 13px; margin-top: 8px; line-height: 1.7; }
+  .cur-now { font-size: 17px; color: var(--text); font-weight: 600; line-height: 1.4; }
+  .cur-stats {
+    margin-left: auto;
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 12px 26px;
+    font-size: 14px;
+  }
+  .stat b { display: block; font-size: 17px; color: var(--accent2); }
+
+  .chart { width: 100%; height: 340px; }
+  .chart-tall { height: 300px; }
+  .section-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>天气仪表盘</h1>
+    <div class="hint">数据文件：weather_data.json · 每 <span id="refreshSec">30</span> 秒自动刷新</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="status" id="status"></span>
+    <button onclick="refresh()">刷新数据</button>
+  </div>
+</header>
+
+<section class="card" id="currentCard">
+  <div class="current">
+    <div class="temp-big"><span id="temp">--</span><small> ℃</small></div>
+    <div class="cur-info">
+      <h2 id="place">--</h2>
+      <div id="coord" class="hint"></div>
+      <div class="cur-meta">
+        <div class="cur-now"><span id="text">--</span> · 体感 <span id="feels">--</span>℃</div>
+        <div class="cur-update">更新时间：<span id="updateTime">--</span></div>
+      </div>
+    </div>
+    <div class="cur-stats">
+      <div class="stat"><b id="humidity">--</b>湿度 %</div>
+      <div class="stat"><b id="pressure">--</b>气压 hPa</div>
+      <div class="stat"><b id="wind">--</b>风</div>
+      <div class="stat"><b id="vis">--</b>能见度 km</div>
+      <div class="stat"><b id="precip">--</b>当前降水 mm</div>
+      <div class="stat"><b id="source">--</b>定位方式</div>
+    </div>
+  </div>
+</section>
+
+<section class="card" id="hourlyCard">
+  <div class="section-title">未来 24 小时：温度 / 降水量（柱上数值，蓝色为有降雨）</div>
+  <div class="chart" id="hourlyChart"></div>
+</section>
+
+<section class="card" id="dailyCard">
+  <div class="section-title">未来 7 天：温度（数值标注）+ 天气 + 风力</div>
+  <div class="chart" id="dailyChart"></div>
+</section>
+
+<script>
+const DATA_URL = 'weather_data.json';
+const REFRESH_SECONDS = 30;   // 自动刷新间隔（秒），设为 0 关闭自动刷新
+
+// ===== 全局配色开关：改这里的值即可调整图表颜色 =====
+const COLORS = {
+  temp: '#f87171',    // 温度（24小时图：线 + Y轴 + 图例）
+  precip: '#0ea5e9',  // 降水（24小时图：柱 + 图例）
+  pop: '#fbbf24',     // 降水概率（24小时图：虚线 + 图例）
+  tempMax: '#f87171', // 最高温（7天图）
+  tempMin: '#60a5fa'  // 最低温（7天图）
+};
+
+let hourlyChart = null;
+let dailyChart = null;
+let lastGood = null;
+
+const $ = (id) => document.getElementById(id);
+
+async function loadData() {
+  const r = await fetch(DATA_URL + '?t=' + Date.now());
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function fmtTime(t) {
+  // "2026-08-14T15:00+08:00" -> "08-14 15时"
+  if (!t || t.length < 13) return t || '';
+  return t.slice(5, 10) + ' ' + t.slice(11, 13) + '时';
+}
+
+function weekdayCN(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return '';
+  return '周' + '日一二三四五六'[d.getDay()];
+}
+
+function dailyWeather(d) {
+  const day = d.textDay || '';
+  const night = d.textNight || '';
+  if (day && night && day !== night) return day + '转' + night;
+  return day || night;
+}
+
+function weatherIcon(text) {
+  // 按天气关键词映射到表情；"X转Y"取后面那个天气做图标
+  if (!text) return '';
+  let w = text;
+  const i = w.indexOf('转');
+  if (i >= 0) w = w.slice(i + 1);
+  // 英文关键词兜底（海外地点未命中 lang=zh、或换了英文数据源时）
+  const en = w.toLowerCase();
+  if (en.includes('thunder') || en.includes('hail')) return '⛈️';
+  if (en.includes('snow')) return (en.includes('storm') || en.includes('heavy')) ? '❄️' : '🌨️';
+  if (en.includes('sleet')) return '🌨️';
+  if (en.includes('drizzle')) return '🌦️';
+  if (en.includes('freezing')) return '🌧️';
+  if (en.includes('rain')) return en.includes('light') ? '🌦️' : '🌧️';
+  if (en.includes('overcast')) return '☁️';
+  if (en.includes('cloudy')) return '⛅';
+  if (en.includes('sunny') || en.includes('clear')) return '☀️';
+  if (en.includes('fog') || en.includes('haze') || en.includes('mist')) return '🌫️';
+  if (en.includes('sand') || en.includes('dust')) return '🌪️';
+  if (en.includes('wind')) return '🌬️';
+  // 中文天气词
+  if (w.includes('雷')) return '⛈️';
+  if (w.includes('雪')) return w.includes('暴') ? '❄️' : '🌨️';
+  if (w.includes('冻雨')) return '🌧️';
+  if (w.includes('大雨') || w.includes('暴雨')) return '🌧️';
+  if (w.includes('中雨')) return '🌧️';
+  if (w.includes('小雨')) return '🌦️';
+  if (w.includes('雨')) return '🌧️';
+  if (w.includes('阴')) return '☁️';
+  if (w.includes('云')) return w.includes('晴') ? '🌤️' : '⛅';
+  if (w.includes('晴')) return '☀️';
+  if (w.includes('雾') || w.includes('霾')) return '🌫️';
+  if (w.includes('沙')) return '🌪️';
+  if (w.includes('风')) return '🌬️';
+  return '🌡️';
+}
+
+function placeName(data) {
+  const p = data.place;
+  if (p) {
+    const parts = [p.country, p.adm1, p.name].filter(Boolean);
+    if (parts.length) return parts.join(' ');
+  }
+  const loc = data.location || {};
+  return [loc.country, loc.region, loc.city].filter(Boolean).join(' ') || '未知位置';
+}
+
+function renderCurrent(data) {
+  const now = data.now || {};
+  const loc = data.location || {};
+  $('place').textContent = placeName(data);
+  $('coord').textContent = '';
+  if (loc.latitude != null) {
+    const label = '经纬度 ' + Number(loc.latitude).toFixed(4) + ', ' + Number(loc.longitude).toFixed(4);
+    const map = data.map;
+    if (map && map.url) {
+      const names = { amap: '高德', osm: 'OSM', google: '谷歌' };
+      const a = document.createElement('a');
+      a.href = map.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'map-link';
+      a.textContent = label + '（' + (names[map.provider] || map.provider) + '）';
+      $('coord').appendChild(a);
+    } else {
+      $('coord').textContent = label;
+    }
+  }
+  $('temp').textContent = now.temp != null ? now.temp : '--';
+  $('text').textContent = now.text || '--';
+  $('feels').textContent = now.feelsLike != null ? now.feelsLike : '--';
+  $('updateTime').textContent = data.updateTime || now.obsTime || '--';
+  $('humidity').textContent = now.humidity != null ? now.humidity : '--';
+  $('pressure').textContent = now.pressure != null ? now.pressure : '--';
+  $('wind').textContent = (now.windDir || '') + (now.windScale != null ? now.windScale : '');
+  $('vis').textContent = now.vis != null ? now.vis : '--';
+  $('precip').textContent = now.precip != null ? now.precip : '--';
+  $('source').textContent = loc.source === 'ip_lookup' ? 'IP反查' : (loc.source === 'manual_config' ? '手动配置' : '命令行');
+}
+
+function renderHourly(data) {
+  const hourly = data.hourly || [];
+  $('hourlyCard').classList.toggle('hidden', hourly.length === 0);
+  if (!hourly.length) return;
+  hourlyChart.setOption({
+    grid: { left: 72, right: 52, top: 40, bottom: 64 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function (params) {
+        const idx = params[0] && params[0].dataIndex;
+        const h = hourly[idx];
+        if (!h) return '';
+        const lines = ['<b>' + fmtTime(h.fxTime) + '</b>', h.text || ''];
+        params.forEach(p => {
+          let unit = '';
+          if (p.seriesName === '温度') unit = '℃';
+          else if (p.seriesName === '降水') unit = 'mm';
+          else if (p.seriesName === '降水概率') unit = '%';
+          lines.push(p.marker + ' ' + p.seriesName + ': ' + p.value + unit);
+        });
+        return lines.join('<br/>');
+      }
+    },
+    legend: {
+      data: [
+        { name: '温度', itemStyle: { color: COLORS.temp } },
+        { name: '降水', itemStyle: { color: COLORS.precip } },
+        { name: '降水概率', itemStyle: { color: COLORS.pop } }
+      ],
+      textStyle: { color: '#94a3b8' }
+    },
+    xAxis: {
+      type: 'category',
+      data: hourly.map(h => fmtTime(h.fxTime)),
+      axisLabel: { color: '#94a3b8', rotate: 40, margin: 10 },
+      axisLine: { lineStyle: { color: '#334155' } }
+    },
+    yAxis: [
+      // 三条独立 Y 轴：温度(左，可见标签)、降水(左，仅作缩放，标签/线隐藏，柱上已有数值)、概率(右)
+      {
+        type: 'value', name: '温度℃', position: 'left',
+        nameTextStyle: { color: COLORS.temp }, axisLabel: { color: COLORS.temp },
+        splitLine: { lineStyle: { color: '#1e293b' } }
+      },
+      {
+        type: 'value', position: 'left',
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        splitLine: { show: false }
+      },
+      {
+        type: 'value', name: '降水概率%', position: 'right', max: 100,
+        nameTextStyle: { color: COLORS.pop }, axisLabel: { color: COLORS.pop },
+        splitLine: { show: false }, axisLine: { lineStyle: { color: '#334155' } }
+      }
+    ],
+    series: [
+      {
+        name: '温度', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 0,
+        data: hourly.map(h => h.temp != null ? Number(h.temp) : null),
+        lineStyle: { width: 3, color: COLORS.temp },
+        itemStyle: { color: COLORS.temp },
+        areaStyle: { opacity: 0.12, color: COLORS.temp }
+      },
+      {
+        name: '降水', type: 'bar', yAxisIndex: 1,
+        data: hourly.map(h => h.precip != null ? Number(h.precip) : 0),
+        barMaxWidth: 14,
+        itemStyle: {
+          // 有降雨的时段高亮，无降雨时段淡灰
+          color: function (p) { return p.value > 0 ? COLORS.precip : 'rgba(148,163,184,0.18)'; }
+        },
+        label: {
+          show: true, position: 'top', color: COLORS.precip, fontSize: 10,
+          formatter: function (p) { return p.value > 0 ? p.value : ''; }
+        }
+      },
+      {
+        name: '降水概率', type: 'line', smooth: true, symbol: 'circle', yAxisIndex: 2,
+        data: hourly.map(h => h.pop != null ? Number(h.pop) : null),
+        lineStyle: { width: 2, color: COLORS.pop, type: 'dashed' },
+        itemStyle: { color: COLORS.pop }
+      }
+    ]
+  });
+}
+
+function renderDaily(data) {
+  const daily = data.forecast || [];
+  $('dailyCard').classList.toggle('hidden', daily.length === 0);
+  if (!daily.length) return;
+
+  const labels = daily.map(d => {
+    const date = (d.fxDate || '').slice(5);
+    const wind = (d.windDirDay || '') + (d.windScaleDay ? d.windScaleDay + '级' : '');
+    const wx = dailyWeather(d);
+    return date + ' ' + weekdayCN(d.fxDate) + '\n' + weatherIcon(wx) + ' ' + wx + '\n' + wind;
+  });
+
+  dailyChart.setOption({
+    grid: { left: 45, right: 20, top: 40, bottom: 100 },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: function (params) {
+        const idx = params[0] && params[0].dataIndex;
+        const d = daily[idx];
+        if (!d) return '';
+        const wind = (d.windDirDay || '') + (d.windScaleDay ? d.windScaleDay + '级' : '');
+        const lines = ['<b>' + d.fxDate + ' ' + weekdayCN(d.fxDate) + '</b>'];
+        lines.push(dailyWeather(d) + (wind ? ' · ' + wind : ''));
+        params.forEach(p => lines.push(p.marker + ' ' + p.seriesName + ': ' + p.value + '℃'));
+        return lines.join('<br/>');
+      }
+    },
+    legend: {
+      data: [
+        { name: '最高温', itemStyle: { color: COLORS.tempMax } },
+        { name: '最低温', itemStyle: { color: COLORS.tempMin } }
+      ],
+      textStyle: { color: '#94a3b8' }
+    },
+    xAxis: {
+      type: 'category',
+      data: labels,
+      axisLabel: {
+        color: '#94a3b8', fontSize: 13, lineHeight: 18, interval: 0,
+        rich: { w: { color: '#4ade80', fontSize: 16, lineHeight: 22, fontWeight: 600 } },
+        formatter: function (value) {
+          const lines = String(value).split('\n');
+          return lines[0] + '\n{w|' + (lines[1] || '') + '}\n' + (lines[2] || '');
+        }
+      },
+      axisLine: { lineStyle: { color: '#334155' } }
+    },
+    yAxis: {
+      type: 'value', name: '温度℃', nameTextStyle: { color: '#94a3b8' },
+      axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: '#1e293b' } }
+    },
+    series: [
+      {
+        name: '最高温', type: 'line', smooth: true, symbolSize: 7,
+        data: daily.map(d => d.tempMax != null ? Number(d.tempMax) : null),
+        lineStyle: { width: 3, color: COLORS.tempMax }, itemStyle: { color: COLORS.tempMax },
+        label: { show: true, color: COLORS.tempMax, fontSize: 11, position: 'top', formatter: '{c}°' }
+      },
+      {
+        name: '最低温', type: 'line', smooth: true, symbolSize: 7,
+        data: daily.map(d => d.tempMin != null ? Number(d.tempMin) : null),
+        lineStyle: { width: 3, color: COLORS.tempMin }, itemStyle: { color: COLORS.tempMin },
+        label: { show: true, color: COLORS.tempMin, fontSize: 11, position: 'bottom', formatter: '{c}°' }
+      }
+    ]
+  });
+}
+
+function showStatus(msg, isError) {
+  $('status').textContent = msg;
+  $('status').className = 'status' + (isError ? ' error' : '');
+}
+
+async function refresh() {
+  showStatus('加载中…', false);
+  try {
+    const data = await loadData();
+    lastGood = data;
+    renderCurrent(data);
+    renderHourly(data);
+    renderDaily(data);
+    showStatus('已更新 ' + new Date().toLocaleTimeString(), false);
+  } catch (e) {
+    if (lastGood) {
+      showStatus('刷新失败（' + e.message + '），仍显示上一次数据', true);
+    } else {
+      showStatus('加载失败：' + e.message + '（请确认 weather_data.json 已生成，并通过 http 访问本页）', true);
+    }
+  }
+}
+
+window.addEventListener('resize', () => {
+  if (hourlyChart) hourlyChart.resize();
+  if (dailyChart) dailyChart.resize();
+});
+
+$('refreshSec').textContent = REFRESH_SECONDS;
+hourlyChart = echarts.init($('hourlyChart'));
+dailyChart = echarts.init($('dailyChart'));
+refresh();
+if (REFRESH_SECONDS > 0) setInterval(refresh, REFRESH_SECONDS * 1000);
+</script>
+</body>
+</html>

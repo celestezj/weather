@@ -1,0 +1,13 @@
+{
+  "latitude": 31.24,
+  "longitude": 121.40,
+  "qweather_host": "",
+  "qweather_key": "",
+  "qweather_kid": "",
+  "qweather_sub": "",
+  "qweather_private_key": "ed25519-private.pem",
+
+  "map_providers": ["amap", "osm", "google"],
+  "map_zoom": 16,
+  "map_name": "当前位置"
+}
