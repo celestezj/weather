@@ -4,6 +4,8 @@ ed25519-private.pem
 # 含 API 凭据（kid/sub/私钥路径），只留本地
 config.json
 
+ed25519-public.pem
+
 # ===== Python 缓存 =====
 __pycache__/
 *.py[cod]

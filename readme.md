@@ -57,6 +57,61 @@ python -m pip install -r requirements.txt
 
 关闭启动窗口即停止。以后每次使用只需双击 `quick_start.bat`。
 
+## 6. 仅一次性生成 weather_data.json（不起服务）
+
+如果只想一次性拉取数据并生成 `weather_data.json`（跑完即退出，不启动 HTTP 服务、
+不常驻刷新），直接执行：
+
+```bash
+python weather.py --days 7 --hours 24 --output weather_data.json
+```
+
+这与 `quick_start.bat` 用的是同一套参数，只是去掉了 `--watch 30`；数据结构和网页读取的
+完全一致。需要手动重新生成数据（例如更新坐标或手动刷新）时用这条即可。
+
+## 7. 生成 AI 易读的天气摘要（可选）
+
+`weather_data.json` 里的温度、降雨量等是字符串，时间带时区后缀，且未来24小时/7天
+降雨量需要手动累加，AI 直接读容易算错。可用脚本转成 AI 更易读的摘要：
+
+```bash
+python weather_to_ai_summary.py
+```
+
+- 读取 `weather_data.json`，生成 **`weather_summary.md`**；
+- 把字符串数值统一转成数字并标注单位（mm / % / ℃ / 级）；
+- **预计算**「未来24小时总降雨量」和「未来7天总降雨量」并汇总要点，AI 直接读数字即可，
+  不用自己累加；
+- 含逐小时明细、每日常温/降雨表，有降雨的时段会标 `★`。
+
+自定义输入/输出：
+
+```bash
+python weather_to_ai_summary.py -i xxx.json -o out.md
+```
+
+`weather_data.json` 每次更新后重跑一次即可。该脚本独立运行，不影响原有的
+`quick_start.bat` 启动方式和网页展示。
+
+## 8. 作为 Claude Code 技能使用（可选）
+
+本项目已打包成 Claude Code 技能，可直接拷到你的技能目录全局使用：
+
+- 源码位置：`.claude/skills/qweather/`
+- **全局安装**：把整个 `qweather` 文件夹复制到用户技能目录（Windows 路径）：
+  ```
+  %USERPROFILE%\.claude\skills\qweather\
+  ```
+- 技能内自包含：`SKILL.md`（触发说明）+ `scripts/`（`weather.py`、`get_location.py`、
+  `weather_to_ai_summary.py`）+ `fetch.sh`（一键拉取并生成摘要）+ 空模板。不含任何凭据。
+
+技能默认**不起 http 服务**，直接用 `run.ps1` / `quick_start.bat` 的原有方式不受影响。
+在 Claude Code 里触发 `qweather` 技能后，它会告知怎么生成 `weather_data.json` 和
+`weather_summary.md`。
+
+> 注意：技能里的 `scripts/*.py` 是当前版本的**快照**。若你之后改了仓库里的脚本，
+> 需重新拷入 `.claude/skills/qweather/scripts/` 保持同步。
+
 ---
 
 > **隐私提示**：`config.json`、`ed25519-private.pem` 等含凭据的文件已在 `.gitignore` 中，**请勿提交或外传**。
